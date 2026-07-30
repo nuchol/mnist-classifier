@@ -6,7 +6,7 @@ use ndarray::prelude::*;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
 
-fn read_csv(path: &str) -> Result<Array2<u8>, Box<dyn Error>> {
+fn read_csv(path: &str) -> Result<Array2<f32>, Box<dyn Error>> {
     let file = File::open(path)?;
     let mut rdr = ReaderBuilder::new()
         .has_headers(false)
@@ -16,12 +16,12 @@ fn read_csv(path: &str) -> Result<Array2<u8>, Box<dyn Error>> {
     let mut rows = 0;
     let mut cols = 0;
 
-    for result in rdr.records().take(1000) {
+    for result in rdr.records().take(1) {
         let record = result?;
         cols = cols.max(record.len());
 
         for item in record.iter() {
-            data.push(item.parse::<u8>()?);
+            data.push(item.parse::<f32>()?);
         }
 
         rows += 1;
@@ -33,11 +33,14 @@ fn read_csv(path: &str) -> Result<Array2<u8>, Box<dyn Error>> {
 fn main() {
     const L1_SIZE: usize = 10;
     let data = read_csv("res/mnist_train.csv").unwrap();
-    let img_size = data.dim().0;
+    let (img_size, num_imgs) = data.dim();
 
     let w_1 = Array::random((L1_SIZE, img_size), Uniform::new(0.,1.).unwrap());
-    println!("{:?}", w_1);
+    let b_1 = Array::random((L1_SIZE, num_imgs), Uniform::new(0.,1.).unwrap());
+    let z_1 = w_1.dot(&data) + &b_1;
 
-    println!("{:?}", data.dim());
-    println!("{:?}", data.row(0));
+    println!("======= Data =======\n{:?}\n", data);
+    println!("======= W_1  =======\n{:?}\n", w_1);
+    println!("======= b_1  =======\n{:?}\n", b_1);
+    println!("======= Z_1  =======\n{:?}\n", z_1);
 }
