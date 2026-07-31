@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::error::Error;
 
-use csv::ReaderBuilder;
+use csv::{ReaderBuilder, WriterBuilder};
 use ndarray::prelude::*;
 use ndarray_rand::RandomExt;
 use ndarray_rand::rand_distr::Uniform;
@@ -44,20 +44,16 @@ impl Network {
     }
 
     fn forward_prop(&mut self, a_0: &Array2<f32>) {
-        // println!("=== b1 ===\n{:?}\n", self.b_1);
-        // println!("=== b1_T ===\n{:?}\n", self.b_1.to_shape((10,1)).unwrap());
         self.training_inter.z_1 = self.w_1.dot(a_0) + &self.b_1.to_shape((self.b_1.len() ,1)).unwrap();
         self.training_inter.a_1 = self.training_inter.z_1.map(|x| relu(*x));
         self.training_inter.z_2 = self.w_2.dot(&self.training_inter.a_1) + &self.b_2.to_shape((self.b_2.len(), 1)).unwrap();
         self.training_inter.a_2 = softmax(self.training_inter.z_2.clone());
-        // println!("=== A2 ===\n{:?}\n", self.training_inter.a_2);
     }
 
     fn back_prop(&mut self, x: &Array2<f32>, y: &Array2<f32>) {
         let rep_m = 1.0 / x.dim().1 as f32;
 
         let dz_2 = &self.training_inter.a_2 - y;
-        // println!("=== dZ2 ===\n{:?}", dz_2);
         self.training_inter.dw_2 = (rep_m * &dz_2).dot(&self.training_inter.a_1.t());
         self.training_inter.db_2 = rep_m * dz_2.sum_axis(Axis(1));
 
@@ -80,10 +76,8 @@ impl Network {
             self.back_prop(x, &y);
             self.update_params(alpha);
 
-            if i % 100 == 0 {
+            if i % 50 == 0 {
                 println!("Iteration: {}", i);
-                println!("=== Predictions ===\n{:?}", self.get_predictions());
-                // println!("=== solutions ===\n{:?}", labels);
                 println!("Accuracy: {}%\n", self.get_accuracy(&labels) * 100.0);
             }
         }
@@ -120,11 +114,13 @@ impl Network {
 fn main() {
     let data = read_csv("res/mnist_train.csv").unwrap();
     let labels = data.row(0).to_owned();
-    let x = data.slice(s![1.., ..]).to_owned();
+    let x = data.slice(s![1.., ..]).to_owned() / 255.0;
     let (m, _) = x.dim();
 
     let mut net = Network::new(m);
     net.gradient_descent(&x, labels, 1000, 0.1);
+    let r = write_csv(&net, "res/weights.csv");
+    println!("Result: {:?}", r);
 }
 
 fn read_csv(path: &str) -> Result<Array2<f32>, Box<dyn Error>> {
@@ -137,7 +133,7 @@ fn read_csv(path: &str) -> Result<Array2<f32>, Box<dyn Error>> {
     let mut rows = 0;
     let mut cols = 0;
 
-    for result in rdr.records().take(100) {
+    for result in rdr.records() {
         let record = result?;
         cols = cols.max(record.len());
 
@@ -149,6 +145,54 @@ fn read_csv(path: &str) -> Result<Array2<f32>, Box<dyn Error>> {
     }
 
     Ok(Array2::from_shape_vec((rows, cols), data)?.reversed_axes())
+}
+
+fn write_csv(network: &Network, path: &str) -> Result<(), Box<dyn Error>> {
+    let file = File::create(path)?;
+    let mut wtr = WriterBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_writer(file);
+
+    // Marker row + shape, then the matrix rows
+    write_array2(&mut wtr, "w_1", &network.w_1)?;
+    write_array1(&mut wtr, "b_1", &network.b_1)?;
+    write_array2(&mut wtr, "w_2", &network.w_2)?;
+    write_array1(&mut wtr, "b_2", &network.b_2)?;
+
+    wtr.flush()?;
+    Ok(())
+}
+
+fn write_array2(
+    wtr: &mut csv::Writer<File>,
+    name: &str,
+    arr: &Array2<f32>,
+) -> Result<(), Box<dyn Error>> {
+    println!("Writing {}", name);
+    let (rows, cols) = arr.dim();
+    wtr.write_record(&[name, &rows.to_string(), &cols.to_string()])?;
+
+    for row in arr.rows() {
+        let record: Vec<String> = row.iter().map(|x| x.to_string()).collect();
+        wtr.write_record(&record)?;
+    }
+
+    Ok(())
+}
+
+fn write_array1(
+    wtr: &mut csv::Writer<File>,
+    name: &str,
+    arr: &Array1<f32>,
+) -> Result<(), Box<dyn Error>> {
+    println!("Writing {}", name);
+    wtr.write_record(&[name, &arr.len().to_string()])?;
+
+    let record: Vec<String> = arr.iter().map(|x| x.to_string()).collect();
+    wtr.write_record(&record)?;
+
+    Ok(())
 }
 
 fn one_hot(x: &Array1<f32>) -> Array2<f32> {
@@ -168,7 +212,12 @@ fn diff_relu(x: f32) -> f32 {
     if x > 0.0 { 1.0 } else { 0.0 }
 } 
 
-fn softmax(mut z: Array2<f32>) -> Array2<f32> {
+fn softmax(z: Array2<f32>) -> Array2<f32> {
+    let exp = z.exp();
+    &exp / &exp.sum_axis(Axis(0))
+}
+
+fn softmax_safe(mut z: Array2<f32>) -> Array2<f32> {
     for mut col in z.axis_iter_mut(Axis(1)) {
         let max = col.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap().to_owned();
         col.map_inplace(|x| *x = (*x - max).exp());
